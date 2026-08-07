@@ -581,13 +581,16 @@
     function checkInteractions(particles, radius) {
         const merged = [];
         const dead = new Set();
+        const w = mainCanvas.width;
+        const h = mainCanvas.height;
 
         for (let i = 0; i < particles.length; i++) {
             if (dead.has(i)) continue;
             for (let j = i + 1; j < particles.length; j++) {
                 if (dead.has(j)) continue;
-                const dx = particles[i].x - particles[j].x;
-                const dy = particles[i].y - particles[j].y;
+                // Toroidal shortest distance for interaction check
+                const dx = toroidalDelta(particles[i].x - particles[j].x, w);
+                const dy = toroidalDelta(particles[i].y - particles[j].y, h);
                 const dist = Math.sqrt(dx * dx + dy * dy);
 
                 if (dist < radius) {
@@ -977,19 +980,29 @@
     }
 
     // --- Simulation Step ---
+    // Shortest displacement on torus (wrapping boundaries)
+    function toroidalDelta(d, size) {
+        if (d > size * 0.5) return d - size;
+        if (d < -size * 0.5) return d + size;
+        return d;
+    }
+
     // --- Gravitational interaction ---
-    // F = G * m1 * m2 / r^2, with exponential falloff beyond gravityRange
+    // F = G * m1 * m2 / r, with exponential falloff beyond gravityRange
     function applyGravity(alive) {
-        const G = params.gravityStrength * 500; // Scale up for pixel-space distances
+        const G = params.gravityStrength * 500;
         const range = params.gravityRange;
         if (G === 0) return;
+        const w = mainCanvas.width;
+        const h = mainCanvas.height;
 
         for (let i = 0; i < alive.length; i++) {
             for (let j = i + 1; j < alive.length; j++) {
                 const pi = alive[i];
                 const pj = alive[j];
-                const dx = pj.x - pi.x;
-                const dy = pj.y - pi.y;
+                // Toroidal shortest path
+                const dx = toroidalDelta(pj.x - pi.x, w);
+                const dy = toroidalDelta(pj.y - pi.y, h);
                 const distSq = dx * dx + dy * dy;
                 const dist = Math.sqrt(distSq);
 
