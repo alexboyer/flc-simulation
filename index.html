@@ -311,6 +311,7 @@
             </div>
             <div class="control-group">
                 <button id="btnGravityViz">Show Wells</button>
+                <button id="btnShowBoundaries">Show Boundaries</button>
             </div>
             <div class="control-group">
                 <button id="btnPlay" class="active">▶ Play</button>
@@ -379,6 +380,7 @@
     let animId = null;
     let viewMode = 'top'; // 'top', 'spacetime', 'split'
     let showGravityWells = false;
+    let showBoundaries = false;
 
     // --- Parameters ---
     let params = {
@@ -663,10 +665,11 @@
 
         if (alive.length === 0) return;
 
-        // Compute Voronoi
+        // Compute Voronoi (still needed for area stats)
         const voronoi = computeVoronoi(alive, width, height);
 
-        // Draw Voronoi cells with particle colors (semi-transparent fill)
+        // Draw overlapping probability envelopes with additive blending
+        // Each particle's cone is independent — overlaps show interaction potential
         const imageData = ctx.createImageData(width, height);
         const data = imageData.data;
 
@@ -679,55 +682,120 @@
             return {r: d[0], g: d[1], b: d[2]};
         });
 
-        // Draw Voronoi cells with probability-envelope gradient
-        // The gradient represents how likely the particle is to reach that point:
-        // Bright at center (certain), fading to black at the envelope edge.
-        // Envelope shape is egg-like: large forward lobe, small rear lobe.
-        for (let gy = 0; gy < voronoi.gh; gy++) {
-            for (let gx = 0; gx < voronoi.gw; gx++) {
-                const nearest = voronoi.grid[gy * voronoi.gw + gx];
-                const col = colorCache[nearest];
-                const cert = voronoi.certainty[gy * voronoi.gw + gx];
-                const env = voronoi.envelopes[nearest];
-                const p = alive[nearest];
+        const gridSize = 4;
+        const gw = Math.ceil(width / gridSize);
+        const gh = Math.ceil(height / gridSize);
 
-                // Compute normalized distance from particle to this cell
-                // (how far through the envelope we are: 0 = at particle, 1 = at edge)
-                const cellX = (gx + 0.5) * voronoi.gridSize;
-                const cellY = (gy + 0.5) * voronoi.gridSize;
-                const dx = cellX - p.x;
-                const dy = cellY - p.y;
-                const rawDist = Math.sqrt(dx * dx + dy * dy) + 0.001;
+        for (let gy = 0; gy < gh; gy++) {
+            for (let gx = 0; gx < gw; gx++) {
+                const cellX = (gx + 0.5) * gridSize;
+                const cellY = (gy + 0.5) * gridSize;
 
-                const cosAngle = (dx * env.dirX + dy * env.dirY) / rawDist;
+                // Accumulate contributions from ALL particles
+                let totalR = 0, totalG = 0, totalB = 0, totalA = 0;
 
-                // Smooth egg envelope (same cosine harmonic formula)
-                const cos2Angle = 2 * cosAngle * cosAngle - 1;
-                const maxReachInDir = Math.max(env.c0 + env.c1 * cosAngle + env.c2 * cos2Angle, 10);
+                for (let i = 0; i < alive.length; i++) {
+                    const env = voronoi.envelopes[i];
+                    const col = colorCache[i];
+                    const dx = cellX - env.x;
+                    const dy = cellY - env.y;
+                    const rawDist = Math.sqrt(dx * dx + dy * dy) + 0.001;
 
-                // Normalized position within envelope (0 = center, 1 = edge)
-                const normPos = Math.min(rawDist / maxReachInDir, 1.0);
+                    const cosAngle = (dx * env.dirX + dy * env.dirY) / rawDist;
+                    const cos2Angle = 2 * cosAngle * cosAngle - 1;
+                    const maxReachInDir = Math.max(env.c0 + env.c1 * cosAngle + env.c2 * cos2Angle, 10);
 
-                // Radial falloff only — pure egg shape without certainty distortion
-                const radialFalloff = Math.max(0, 1 - normPos);
-                const alpha = Math.floor(200 * Math.pow(radialFalloff, 1.4));
+                    const normPos = rawDist / maxReachInDir;
+                    if (normPos >= 1.0) continue; // outside this particle's envelope
 
-                // Fill the grid cell
-                for (let py = gy * voronoi.gridSize; py < Math.min((gy + 1) * voronoi.gridSize, height); py++) {
-                    for (let px = gx * voronoi.gridSize; px < Math.min((gx + 1) * voronoi.gridSize, width); px++) {
+                    const radialFalloff = 1 - normPos;
+                    const intensity = Math.pow(radialFalloff, 1.4) * 0.8;
+
+                    totalR += col.r * intensity;
+                    totalG += col.g * intensity;
+                    totalB += col.b * intensity;
+                    totalA += intensity * 200;
+                }
+
+                // Clamp and write pixel data
+                const r = Math.min(255, Math.round(totalR));
+                const g = Math.min(255, Math.round(totalG));
+                const b = Math.min(255, Math.round(totalB));
+                const a = Math.min(255, Math.round(totalA));
+
+                for (let py = gy * gridSize; py < Math.min((gy + 1) * gridSize, height); py++) {
+                    for (let px = gx * gridSize; px < Math.min((gx + 1) * gridSize, width); px++) {
                         const idx = (py * width + px) * 4;
-                        data[idx] = col.r;
-                        data[idx + 1] = col.g;
-                        data[idx + 2] = col.b;
-                        data[idx + 3] = alpha;
+                        data[idx] = r;
+                        data[idx + 1] = g;
+                        data[idx + 2] = b;
+                        data[idx + 3] = a;
                     }
                 }
             }
         }
 
-        // No boundary lines — cones fade naturally to background for smooth transitions
+        // No boundary lines — cones overlap and blend naturally
 
         ctx.putImageData(imageData, 0, 0);
+
+        // Draw interaction boundaries where envelopes overlap
+        if (showBoundaries && alive.length > 1) {
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+            ctx.lineWidth = 1;
+            for (let gy = 0; gy < gh - 1; gy++) {
+                for (let gx = 0; gx < gw - 1; gx++) {
+                    const cellX = (gx + 0.5) * gridSize;
+                    const cellY = (gy + 0.5) * gridSize;
+
+                    // Count how many envelopes cover this cell
+                    let coverCount = 0;
+                    for (let i = 0; i < alive.length; i++) {
+                        const env = voronoi.envelopes[i];
+                        const dx = cellX - env.x;
+                        const dy = cellY - env.y;
+                        const rawDist = Math.sqrt(dx * dx + dy * dy) + 0.001;
+                        const cosAngle = (dx * env.dirX + dy * env.dirY) / rawDist;
+                        const cos2Angle = 2 * cosAngle * cosAngle - 1;
+                        const maxReachInDir = Math.max(env.c0 + env.c1 * cosAngle + env.c2 * cos2Angle, 10);
+                        if (rawDist / maxReachInDir < 1.0) coverCount++;
+                        if (coverCount >= 2) break;
+                    }
+
+                    // Check neighbor to detect boundary transitions
+                    const nCellX = (gx + 1.5) * gridSize;
+                    const nCellY = (gy + 1.5) * gridSize;
+                    let nCountR = 0, nCountD = 0;
+                    for (let i = 0; i < alive.length; i++) {
+                        const env = voronoi.envelopes[i];
+                        // Right neighbor
+                        const dxR = nCellX - env.x;
+                        const dyR = cellY - env.y;
+                        const rawDistR = Math.sqrt(dxR * dxR + dyR * dyR) + 0.001;
+                        const cosR = (dxR * env.dirX + dyR * env.dirY) / rawDistR;
+                        const cos2R = 2 * cosR * cosR - 1;
+                        const maxR = Math.max(env.c0 + env.c1 * cosR + env.c2 * cos2R, 10);
+                        if (rawDistR / maxR < 1.0) nCountR++;
+                        // Down neighbor
+                        const dxD = cellX - env.x;
+                        const dyD = nCellY - env.y;
+                        const rawDistD = Math.sqrt(dxD * dxD + dyD * dyD) + 0.001;
+                        const cosD = (dxD * env.dirX + dyD * env.dirY) / rawDistD;
+                        const cos2D = 2 * cosD * cosD - 1;
+                        const maxD = Math.max(env.c0 + env.c1 * cosD + env.c2 * cos2D, 10);
+                        if (rawDistD / maxD < 1.0) nCountD++;
+                    }
+
+                    // Draw edge where overlap count changes (entering/leaving overlap zone)
+                    if ((coverCount >= 2) !== (nCountR >= 2) || (coverCount >= 2) !== (nCountD >= 2)) {
+                        const px = gx * gridSize;
+                        const py = gy * gridSize;
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                        ctx.fillRect(px, py, gridSize, gridSize);
+                    }
+                }
+            }
+        }
 
         // Draw particle trails (break on wrap)
         alive.forEach(p => {
@@ -1211,6 +1279,11 @@
         showGravityWells = !showGravityWells;
         document.getElementById('btnGravityViz').classList.toggle('active', showGravityWells);
         document.getElementById('btnGravityViz').textContent = showGravityWells ? 'Hide Wells' : 'Show Wells';
+    });
+    document.getElementById('btnShowBoundaries').addEventListener('click', () => {
+        showBoundaries = !showBoundaries;
+        document.getElementById('btnShowBoundaries').classList.toggle('active', showBoundaries);
+        document.getElementById('btnShowBoundaries').textContent = showBoundaries ? 'Hide Boundaries' : 'Show Boundaries';
     });
 
     document.getElementById('btnPlay').addEventListener('click', () => {
