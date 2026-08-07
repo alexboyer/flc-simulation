@@ -792,6 +792,48 @@
                     }
                 }
             }
+
+            // Show interaction probability at the midpoint between each overlapping pair
+            ctx.font = '11px monospace';
+            ctx.textAlign = 'center';
+            for (let i = 0; i < alive.length; i++) {
+                for (let j = i + 1; j < alive.length; j++) {
+                    const pi = alive[i];
+                    const pj = alive[j];
+                    const ei = voronoi.envelopes[i];
+                    const ej = voronoi.envelopes[j];
+
+                    // Check if envelopes overlap at midpoint
+                    const midX = (pi.x + pj.x) / 2;
+                    const midY = (pi.y + pj.y) / 2;
+
+                    // Compute normalized position for each particle at midpoint
+                    const dxi = midX - ei.x, dyi = midY - ei.y;
+                    const distI = Math.sqrt(dxi * dxi + dyi * dyi) + 0.001;
+                    const cosI = (dxi * ei.dirX + dyi * ei.dirY) / distI;
+                    const maxI = Math.max(ei.backwardReach + (ei.forwardReach - ei.backwardReach) * Math.pow((1 + cosI) * 0.5, ei.sharpness), 5);
+                    const normI = distI / maxI;
+
+                    const dxj = midX - ej.x, dyj = midY - ej.y;
+                    const distJ = Math.sqrt(dxj * dxj + dyj * dyj) + 0.001;
+                    const cosJ = (dxj * ej.dirX + dyj * ej.dirY) / distJ;
+                    const maxJ = Math.max(ej.backwardReach + (ej.forwardReach - ej.backwardReach) * Math.pow((1 + cosJ) * 0.5, ej.sharpness), 5);
+                    const normJ = distJ / maxJ;
+
+                    // Both envelopes reach the midpoint
+                    if (normI < 1.0 && normJ < 1.0) {
+                        // Probability = product of both particles' intensity at midpoint
+                        const probI = Math.pow(1 - normI, 1.4);
+                        const probJ = Math.pow(1 - normJ, 1.4);
+                        const prob = Math.min(99, Math.round(probI * probJ * 100));
+                        if (prob > 0) {
+                            ctx.fillStyle = `rgba(0, 255, 100, ${0.5 + prob * 0.005})`;
+                            ctx.fillText(`${prob}%`, midX, midY);
+                        }
+                    }
+                }
+            }
+            ctx.textAlign = 'left';
         }
 
         // Draw particle trails (break on wrap)
