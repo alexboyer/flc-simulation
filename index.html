@@ -276,38 +276,38 @@
         <div class="controls">
             <div class="control-group">
                 <label>Particles:</label>
-                <input type="range" id="particleCount" min="3" max="30" value="12">
-                <span id="particleCountVal">12</span>
+                <input type="range" id="particleCount" min="3" max="30" value="8">
+                <span id="particleCountVal">8</span>
             </div>
             <div class="control-group">
                 <label>Speed Limit (c):</label>
-                <input type="range" id="speedLimit" min="1" max="10" value="5">
-                <span id="speedLimitVal">5</span>
+                <input type="range" id="speedLimit" min="1" max="10" value="7">
+                <span id="speedLimitVal">7</span>
             </div>
             <div class="control-group">
                 <label>Brownian σ:</label>
-                <input type="range" id="brownian" min="0" max="100" value="30">
-                <span id="brownianVal">0.30</span>
+                <input type="range" id="brownian" min="0" max="100" value="2">
+                <span id="brownianVal">0.02</span>
             </div>
             <div class="control-group">
                 <label>Interaction Radius:</label>
-                <input type="range" id="interactionRadius" min="5" max="50" value="15">
-                <span id="interactionRadiusVal">15</span>
+                <input type="range" id="interactionRadius" min="5" max="50" value="5">
+                <span id="interactionRadiusVal">5</span>
             </div>
             <div class="control-group">
                 <label>Cone Lookahead:</label>
-                <input type="range" id="lookahead" min="0" max="50" value="20">
-                <span id="lookaheadVal">20</span>
+                <input type="range" id="lookahead" min="0" max="5" value="1" step="1">
+                <span id="lookaheadVal">1</span>
             </div>
             <div class="control-group">
                 <label>Gravity Falloff:</label>
-                <input type="range" id="gravityRange" min="10" max="500" value="150">
-                <span id="gravityRangeVal">150</span>
+                <input type="range" id="gravityRange" min="10" max="500" value="500">
+                <span id="gravityRangeVal">500</span>
             </div>
             <div class="control-group">
                 <label>Gravity Strength:</label>
-                <input type="range" id="gravityStrength" min="0" max="100" value="50">
-                <span id="gravityStrengthVal">0.025</span>
+                <input type="range" id="gravityStrength" min="0" max="100" value="8">
+                <span id="gravityStrengthVal">0.004</span>
             </div>
             <div class="control-group">
                 <button id="btnPlay" class="active">▶ Play</button>
@@ -378,13 +378,13 @@
 
     // --- Parameters ---
     let params = {
-        particleCount: 12,
-        speedLimit: 5,
-        brownianSigma: 0.30,
-        interactionRadius: 15,
-        lookahead: 20,  // How far ahead (in time steps) to project velocity for cone shape
-        gravityRange: 150,    // Falloff distance for gravitational influence
-        gravityStrength: 0.025 // Gravitational constant G (range 0–0.05)
+        particleCount: 8,
+        speedLimit: 7,
+        brownianSigma: 0.02,
+        interactionRadius: 5,
+        lookahead: 1,  // How far ahead (in time steps) to project velocity for cone shape
+        gravityRange: 500,    // Falloff distance for gravitational influence
+        gravityStrength: 0.004 // Gravitational constant G (range 0–0.05)
     };
 
     // --- Color palette for particles ---
@@ -427,9 +427,11 @@
 
         applyBrownianMotion(sigma) {
             // Box-Muller transform for Gaussian noise
+            // Inertia: heavier particles resist perturbation (sigma / mass)
             const u1 = Math.random();
             const u2 = Math.random();
-            const mag = sigma * Math.sqrt(-2 * Math.log(u1 || 0.0001));
+            const effectiveSigma = sigma / this.mass;
+            const mag = effectiveSigma * Math.sqrt(-2 * Math.log(u1 || 0.0001));
             const angle = 2 * Math.PI * u2;
             this.vx += mag * Math.cos(angle);
             this.vy += mag * Math.sin(angle);
