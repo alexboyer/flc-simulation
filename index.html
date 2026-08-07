@@ -1,0 +1,1192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Relative Light Cone Simulation — Interaction-Induced Branching</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0a0f;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            padding: 10px 20px;
+            background: #111118;
+            border-bottom: 1px solid #2a2a3a;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        header h1 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #8ab4f8;
+            white-space: nowrap;
+        }
+        .controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .control-group label {
+            font-size: 11px;
+            color: #888;
+            white-space: nowrap;
+        }
+        .control-group input[type="range"] {
+            width: 80px;
+            accent-color: #8ab4f8;
+        }
+        .control-group span {
+            font-size: 11px;
+            color: #aaa;
+            min-width: 28px;
+        }
+        button {
+            background: #2a2a3a;
+            border: 1px solid #3a3a4a;
+            color: #e0e0e0;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover { background: #3a3a5a; }
+        button.active { background: #4a4a6a; border-color: #8ab4f8; }
+        .main-container {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        .canvas-container {
+            flex: 1;
+            position: relative;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        .sidebar {
+            width: 280px;
+            background: #111118;
+            border-left: 1px solid #2a2a3a;
+            padding: 12px;
+            overflow-y: auto;
+            font-size: 11px;
+        }
+        .sidebar h2 {
+            font-size: 12px;
+            color: #8ab4f8;
+            margin-bottom: 8px;
+            border-bottom: 1px solid #2a2a3a;
+            padding-bottom: 4px;
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 0;
+            border-bottom: 1px solid #1a1a2a;
+        }
+        .stat-label { color: #888; }
+        .stat-value { color: #ccc; font-family: monospace; }
+        .event-log {
+            margin-top: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .event-log .event {
+            padding: 4px 6px;
+            margin-bottom: 3px;
+            background: #1a1a2a;
+            border-radius: 3px;
+            border-left: 3px solid #8ab4f8;
+        }
+        .event .time { color: #666; font-family: monospace; }
+        .event .desc { color: #bbb; }
+        .view-tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+        .legend {
+            margin-top: 12px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 0;
+        }
+        .legend-swatch {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+        #spacetimeCanvas {
+            border-top: 1px solid #2a2a3a;
+        }
+
+        /* --- Mobile Responsive --- */
+        .mobile-toggle {
+            display: none;
+            background: #2a2a3a;
+            border: 1px solid #3a3a4a;
+            color: #8ab4f8;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+            position: fixed;
+            bottom: 12px;
+            right: 12px;
+            z-index: 100;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+        }
+        .mobile-toggle:active { background: #4a4a6a; }
+
+        .mobile-stats {
+            display: none;
+            position: fixed;
+            top: 50px;
+            left: 8px;
+            background: rgba(17,17,24,0.85);
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 10px;
+            z-index: 50;
+            backdrop-filter: blur(4px);
+        }
+        .mobile-stats .stat-row {
+            border: none;
+            padding: 1px 0;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                overflow: hidden;
+                touch-action: none;
+            }
+            header {
+                padding: 8px 12px;
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+                max-height: 60vh;
+                overflow-y: auto;
+                transition: max-height 0.3s ease;
+            }
+            header.collapsed {
+                max-height: 44px;
+                overflow: hidden;
+            }
+            header.collapsed .controls {
+                display: none;
+            }
+            header h1 {
+                font-size: 13px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                width: 100%;
+            }
+            header h1::after {
+                content: '▼';
+                font-size: 10px;
+                color: #666;
+                margin-left: auto;
+            }
+            header.collapsed h1::after {
+                content: '▶';
+            }
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 8px;
+                width: 100%;
+            }
+            .control-group {
+                gap: 8px;
+            }
+            .control-group label {
+                font-size: 12px;
+                min-width: 100px;
+            }
+            .control-group input[type="range"] {
+                width: 100%;
+                flex: 1;
+                height: 28px;
+            }
+            .control-group span {
+                font-size: 12px;
+                min-width: 40px;
+                text-align: right;
+            }
+            button {
+                padding: 10px 16px;
+                font-size: 13px;
+                min-height: 36px;
+            }
+            .main-container {
+                flex-direction: column;
+            }
+            .sidebar {
+                display: none;
+            }
+            .mobile-toggle {
+                display: block;
+            }
+            .mobile-stats {
+                display: block;
+            }
+            .canvas-container {
+                width: 100%;
+                height: 100%;
+            }
+        }
+
+        @media (max-width: 768px) and (orientation: landscape) {
+            header.collapsed {
+                max-height: 36px;
+            }
+            .mobile-stats {
+                top: 40px;
+                font-size: 9px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Relative Light Cone Simulation</h1>
+        <div class="controls">
+            <div class="control-group">
+                <label>Particles:</label>
+                <input type="range" id="particleCount" min="3" max="30" value="12">
+                <span id="particleCountVal">12</span>
+            </div>
+            <div class="control-group">
+                <label>Speed Limit (c):</label>
+                <input type="range" id="speedLimit" min="1" max="10" value="5">
+                <span id="speedLimitVal">5</span>
+            </div>
+            <div class="control-group">
+                <label>Brownian σ:</label>
+                <input type="range" id="brownian" min="0" max="100" value="30">
+                <span id="brownianVal">0.30</span>
+            </div>
+            <div class="control-group">
+                <label>Interaction Radius:</label>
+                <input type="range" id="interactionRadius" min="5" max="50" value="15">
+                <span id="interactionRadiusVal">15</span>
+            </div>
+            <div class="control-group">
+                <label>Cone Lookahead:</label>
+                <input type="range" id="lookahead" min="0" max="50" value="20">
+                <span id="lookaheadVal">20</span>
+            </div>
+            <div class="control-group">
+                <label>Gravity Falloff:</label>
+                <input type="range" id="gravityRange" min="10" max="500" value="150">
+                <span id="gravityRangeVal">150</span>
+            </div>
+            <div class="control-group">
+                <label>Gravity Strength:</label>
+                <input type="range" id="gravityStrength" min="0" max="100" value="50">
+                <span id="gravityStrengthVal">0.025</span>
+            </div>
+            <div class="control-group">
+                <button id="btnPlay" class="active">▶ Play</button>
+                <button id="btnStep">⏭ Step</button>
+                <button id="btnReset">↺ Reset</button>
+            </div>
+            <div class="control-group">
+                <button id="btnViewTop" class="active">2D View</button>
+                <button id="btnViewSpacetime">Spacetime</button>
+                <button id="btnViewSplit">Split</button>
+            </div>
+        </div>
+    </header>
+    <div class="mobile-stats" id="mobileStats">
+        <div class="stat-row"><span class="stat-label">t=</span><span class="stat-value" id="mStatTime">0</span> &nbsp;<span class="stat-label">n=</span><span class="stat-value" id="mStatParticles">0</span> &nbsp;<span class="stat-label">merges=</span><span class="stat-value" id="mStatMerges">0</span></div>
+    </div>
+    <button class="mobile-toggle" id="btnMobileControls">⚙ Controls</button>
+    <div class="main-container">
+        <div class="canvas-container" id="canvasContainer">
+            <canvas id="mainCanvas"></canvas>
+            <canvas id="spacetimeCanvas" style="display:none;"></canvas>
+        </div>
+        <div class="sidebar">
+            <h2>Simulation State</h2>
+            <div class="stat-row"><span class="stat-label">Time Step:</span><span class="stat-value" id="statTime">0</span></div>
+            <div class="stat-row"><span class="stat-label">Active Particles:</span><span class="stat-value" id="statParticles">0</span></div>
+            <div class="stat-row"><span class="stat-label">Total Merges:</span><span class="stat-value" id="statMerges">0</span></div>
+            <div class="stat-row"><span class="stat-label">Avg Voronoi Area:</span><span class="stat-value" id="statAvgArea">—</span></div>
+            <div class="stat-row"><span class="stat-label">Area Std Dev:</span><span class="stat-value" id="statAreaDev">—</span></div>
+
+            <h2 style="margin-top:12px;">Light Cone Analysis</h2>
+            <div class="stat-row"><span class="stat-label">Max Cone Expansion:</span><span class="stat-value" id="statMaxExpansion">—</span></div>
+            <div class="stat-row"><span class="stat-label">Affected Neighbors:</span><span class="stat-value" id="statAffected">—</span></div>
+
+            <div class="legend" id="legend">
+                <h2>Particles</h2>
+            </div>
+
+            <div class="event-log">
+                <h2>Interaction Log</h2>
+                <div id="eventLog"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // ============================================================
+    // RELATIVE LIGHT CONE SIMULATION
+    // Theory: Interaction-induced branching is relative, not universal.
+    // Voronoi cells represent "forward light cones" — the region of
+    // space each particle can causally influence at each time step.
+    // When particles merge, their combined cone alters ALL other cones.
+    // ============================================================
+
+    const mainCanvas = document.getElementById('mainCanvas');
+    const spacetimeCanvas = document.getElementById('spacetimeCanvas');
+    const ctx = mainCanvas.getContext('2d');
+    const stCtx = spacetimeCanvas.getContext('2d');
+
+    // --- State ---
+    let particles = [];
+    let history = [];       // Array of snapshots: [{particles, voronoiAreas, time}]
+    let mergeEvents = [];
+    let timeStep = 0;
+    let running = true;
+    let animId = null;
+    let viewMode = 'top'; // 'top', 'spacetime', 'split'
+
+    // --- Parameters ---
+    let params = {
+        particleCount: 12,
+        speedLimit: 5,
+        brownianSigma: 0.30,
+        interactionRadius: 15,
+        lookahead: 20,  // How far ahead (in time steps) to project velocity for cone shape
+        gravityRange: 150,    // Falloff distance for gravitational influence
+        gravityStrength: 0.025 // Gravitational constant G (range 0–0.05)
+    };
+
+    // --- Color palette for particles ---
+    const PALETTE = [
+        '#ff6b6b', '#feca57', '#48dbfb', '#ff9ff3', '#54a0ff',
+        '#5f27cd', '#01a3a4', '#f368e0', '#ee5a24', '#009432',
+        '#6c5ce7', '#fd79a8', '#00b894', '#e17055', '#0984e3',
+        '#d63031', '#fdcb6e', '#00cec9', '#e84393', '#2d3436',
+        '#a29bfe', '#55efc4', '#fab1a0', '#74b9ff', '#b2bec3',
+        '#636e72', '#dfe6e9', '#ffeaa7', '#81ecec', '#fd79a8'
+    ];
+
+    function hslToRgb(h, s, l) {
+        s /= 100; l /= 100;
+        const k = n => (n + h / 30) % 12;
+        const a = s * Math.min(l, 1 - l);
+        const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+        return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+    }
+
+    // --- Particle class ---
+    class Particle {
+        constructor(x, y, vx, vy, id, color) {
+            this.x = x;
+            this.y = y;
+            this.vx = vx;
+            this.vy = vy;
+            this.id = id;
+            this.color = color;
+            this.mass = 1;
+            this.alive = true;
+            this.trail = [{x, y, t: 0}];
+            this.voronoiAreaHistory = [];
+            this.mergedFrom = []; // IDs of particles merged into this one
+        }
+
+        speed() {
+            return Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+        }
+
+        applyBrownianMotion(sigma) {
+            // Box-Muller transform for Gaussian noise
+            const u1 = Math.random();
+            const u2 = Math.random();
+            const mag = sigma * Math.sqrt(-2 * Math.log(u1 || 0.0001));
+            const angle = 2 * Math.PI * u2;
+            this.vx += mag * Math.cos(angle);
+            this.vy += mag * Math.sin(angle);
+
+            // Enforce speed limit (analogous to c)
+            const spd = this.speed();
+            if (spd > params.speedLimit) {
+                this.vx = (this.vx / spd) * params.speedLimit;
+                this.vy = (this.vy / spd) * params.speedLimit;
+            }
+        }
+
+        step(dt, width, height) {
+            this.applyBrownianMotion(params.brownianSigma);
+            this.x += this.vx * dt;
+            this.y += this.vy * dt;
+
+            // Elastic boundary reflection
+            if (this.x < 0) { this.x = -this.x; this.vx = Math.abs(this.vx); }
+            if (this.x > width) { this.x = 2 * width - this.x; this.vx = -Math.abs(this.vx); }
+            if (this.y < 0) { this.y = -this.y; this.vy = Math.abs(this.vy); }
+            if (this.y > height) { this.y = 2 * height - this.y; this.vy = -Math.abs(this.vy); }
+
+            this.trail.push({x: this.x, y: this.y, t: timeStep});
+        }
+    }
+
+    // --- Voronoi computation using velocity-projected directional distance ---
+    // The "forward light cone" of each particle is determined by:
+    //   1. Project particle forward by velocity * lookahead (directional bias)
+    //   2. Weight distance inversely by speed (faster = more reach)
+    // Effective distance: |point - projected_position| / (1 + speed/c)
+    // This makes cells stretch in the direction of travel and expand for faster particles.
+
+    function computeVoronoi(particles, width, height) {
+        const gridSize = 4;
+        const gw = Math.ceil(width / gridSize);
+        const gh = Math.ceil(height / gridSize);
+        const grid = new Int32Array(gw * gh);
+        const areas = new Map();
+        const T = params.lookahead; // lookahead time steps
+        const c = params.speedLimit;
+
+        particles.forEach(p => areas.set(p.id, 0));
+
+        // Pre-compute projected positions and speed weights
+        const projected = particles.map(p => ({
+            // Project position forward along velocity vector
+            px: p.x + p.vx * T,
+            py: p.y + p.vy * T,
+            // Speed-based weight: faster particles claim more space
+            weight: 1 + (p.speed() / c)
+        }));
+
+        // Certainty grid: how dominant is the nearest particle over the second-nearest
+        const certainty = new Float32Array(gw * gh);
+
+        // Assign each grid cell to the particle whose projected cone reaches it first
+        for (let gy = 0; gy < gh; gy++) {
+            for (let gx = 0; gx < gw; gx++) {
+                const px = (gx + 0.5) * gridSize;
+                const py = (gy + 0.5) * gridSize;
+                let minDist = Infinity;
+                let secondDist = Infinity;
+                let nearest = -1;
+
+                for (let i = 0; i < particles.length; i++) {
+                    const proj = projected[i];
+                    const dx = px - proj.px;
+                    const dy = py - proj.py;
+                    // Effective distance: raw distance divided by speed weight
+                    // Lower effective distance = this particle "reaches" this point sooner
+                    const d = (dx * dx + dy * dy) / (proj.weight * proj.weight);
+                    if (d < minDist) {
+                        secondDist = minDist;
+                        minDist = d;
+                        nearest = i;
+                    } else if (d < secondDist) {
+                        secondDist = d;
+                    }
+                }
+
+                grid[gy * gw + gx] = nearest;
+                // Certainty: ratio of how much closer nearest is vs second-nearest
+                // 1.0 = deep inside cell (high certainty), 0.0 = on boundary (ambiguous)
+                const dN = Math.sqrt(minDist);
+                const dS = Math.sqrt(secondDist);
+                certainty[gy * gw + gx] = (dS - dN) / (dS + dN + 0.001);
+
+                const id = particles[nearest].id;
+                areas.set(id, (areas.get(id) || 0) + gridSize * gridSize);
+            }
+        }
+
+        return { grid, gw, gh, gridSize, areas, certainty };
+    }
+
+    // --- Interaction / Merge Logic ---
+    // Conservation of momentum: combined velocity = (m1*v1 + m2*v2) / (m1+m2)
+    function checkInteractions(particles, radius) {
+        const merged = [];
+        const dead = new Set();
+
+        for (let i = 0; i < particles.length; i++) {
+            if (dead.has(i)) continue;
+            for (let j = i + 1; j < particles.length; j++) {
+                if (dead.has(j)) continue;
+                const dx = particles[i].x - particles[j].x;
+                const dy = particles[i].y - particles[j].y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < radius) {
+                    // Merge j into i (conservation of momentum)
+                    const pi = particles[i];
+                    const pj = particles[j];
+                    const totalMass = pi.mass + pj.mass;
+
+                    // Combined velocity (momentum conservation)
+                    pi.vx = (pi.mass * pi.vx + pj.mass * pj.vx) / totalMass;
+                    pi.vy = (pi.mass * pi.vy + pj.mass * pj.vy) / totalMass;
+
+                    // Position at center of mass
+                    pi.x = (pi.mass * pi.x + pj.mass * pj.x) / totalMass;
+                    pi.y = (pi.mass * pi.y + pj.mass * pj.y) / totalMass;
+
+                    pi.mass = totalMass;
+                    pi.mergedFrom.push(pj.id, ...pj.mergedFrom);
+
+                    // Enforce speed limit post-merge
+                    const spd = pi.speed();
+                    if (spd > params.speedLimit) {
+                        pi.vx = (pi.vx / spd) * params.speedLimit;
+                        pi.vy = (pi.vy / spd) * params.speedLimit;
+                    }
+
+                    pj.alive = false;
+                    dead.add(j);
+
+                    merged.push({
+                        time: timeStep,
+                        survivor: pi.id,
+                        absorbed: pj.id,
+                        position: {x: pi.x, y: pi.y},
+                        newVelocity: {vx: pi.vx, vy: pi.vy},
+                        newMass: totalMass
+                    });
+                }
+            }
+        }
+
+        return merged;
+    }
+
+    // --- Initialization ---
+    function initParticles(count, width, height) {
+        particles = [];
+        for (let i = 0; i < count; i++) {
+            const margin = 50;
+            const x = margin + Math.random() * (width - 2 * margin);
+            const y = margin + Math.random() * (height - 2 * margin);
+            const angle = Math.random() * 2 * Math.PI;
+            const speed = 0.5 + Math.random() * (params.speedLimit * 0.6);
+            const vx = speed * Math.cos(angle);
+            const vy = speed * Math.sin(angle);
+            particles.push(new Particle(x, y, vx, vy, i, PALETTE[i % PALETTE.length]));
+        }
+        history = [];
+        mergeEvents = [];
+        timeStep = 0;
+        document.getElementById('eventLog').innerHTML = '';
+        updateLegend();
+    }
+
+    // --- Rendering ---
+    function renderTopView(canvas, ctx) {
+        const width = canvas.width;
+        const height = canvas.height;
+        const alive = particles.filter(p => p.alive);
+
+        if (alive.length === 0) return;
+
+        // Compute Voronoi
+        const voronoi = computeVoronoi(alive, width, height);
+
+        // Draw Voronoi cells with particle colors (semi-transparent fill)
+        const imageData = ctx.createImageData(width, height);
+        const data = imageData.data;
+
+        // Pre-parse colors
+        const colorCache = alive.map(p => {
+            const c = document.createElement('canvas').getContext('2d');
+            c.fillStyle = p.color;
+            c.fillRect(0, 0, 1, 1);
+            const d = c.getImageData(0, 0, 1, 1).data;
+            return {r: d[0], g: d[1], b: d[2]};
+        });
+
+        // Draw Voronoi cells with certainty gradient
+        // High certainty (deep in cell) = strong color, low certainty (boundary) = fades out
+        for (let gy = 0; gy < voronoi.gh; gy++) {
+            for (let gx = 0; gx < voronoi.gw; gx++) {
+                const nearest = voronoi.grid[gy * voronoi.gw + gx];
+                const col = colorCache[nearest];
+                const cert = voronoi.certainty[gy * voronoi.gw + gx];
+
+                // Map certainty to alpha: high certainty = visible, fades to black at edges
+                // Use a power curve for dramatic falloff to zero
+                const alpha = Math.floor(200 * Math.pow(cert, 0.6));
+
+                // Fill the grid cell
+                for (let py = gy * voronoi.gridSize; py < Math.min((gy + 1) * voronoi.gridSize, height); py++) {
+                    for (let px = gx * voronoi.gridSize; px < Math.min((gx + 1) * voronoi.gridSize, width); px++) {
+                        const idx = (py * width + px) * 4;
+                        data[idx] = col.r;
+                        data[idx + 1] = col.g;
+                        data[idx + 2] = col.b;
+                        data[idx + 3] = alpha;
+                    }
+                }
+            }
+        }
+
+        // Draw Voronoi edges (where certainty is lowest — the ambiguous boundaries)
+        for (let gy = 0; gy < voronoi.gh - 1; gy++) {
+            for (let gx = 0; gx < voronoi.gw - 1; gx++) {
+                const curr = voronoi.grid[gy * voronoi.gw + gx];
+                const right = voronoi.grid[gy * voronoi.gw + gx + 1];
+                const below = voronoi.grid[(gy + 1) * voronoi.gw + gx];
+
+                if (curr !== right || curr !== below) {
+                    const cert = voronoi.certainty[gy * voronoi.gw + gx];
+                    // Edge brightness inversely proportional to certainty
+                    const edgeAlpha = Math.floor(80 + 160 * (1 - cert));
+                    for (let py = gy * voronoi.gridSize; py < Math.min((gy + 1) * voronoi.gridSize, height); py++) {
+                        for (let px = gx * voronoi.gridSize; px < Math.min((gx + 1) * voronoi.gridSize, width); px++) {
+                            const idx = (py * width + px) * 4;
+                            data[idx] = 0;
+                            data[idx + 1] = 0;
+                            data[idx + 2] = 0;
+                            data[idx + 3] = edgeAlpha;
+                        }
+                    }
+                }
+            }
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+
+        // Draw particle trails
+        alive.forEach(p => {
+            if (p.trail.length > 1) {
+                ctx.beginPath();
+                ctx.strokeStyle = p.color + '60';
+                ctx.lineWidth = 1;
+                const start = Math.max(0, p.trail.length - 60);
+                ctx.moveTo(p.trail[start].x, p.trail[start].y);
+                for (let i = start + 1; i < p.trail.length; i++) {
+                    ctx.lineTo(p.trail[i].x, p.trail[i].y);
+                }
+                ctx.stroke();
+            }
+        });
+
+        // Draw particles
+        alive.forEach(p => {
+            // Glow
+            const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 8 + p.mass * 2);
+            gradient.addColorStop(0, p.color + 'cc');
+            gradient.addColorStop(1, p.color + '00');
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 8 + p.mass * 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Core
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 3 + p.mass, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Velocity arrow
+            ctx.strokeStyle = p.color + 'aa';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(p.x + p.vx * 5, p.y + p.vy * 5);
+            ctx.stroke();
+
+            // Mass label if merged
+            if (p.mass > 1) {
+                ctx.fillStyle = '#fff';
+                ctx.font = '9px monospace';
+                ctx.fillText(`m=${p.mass.toFixed(1)}`, p.x + 8, p.y - 8);
+            }
+        });
+
+        // Draw merge flash effects
+        const recentMerges = mergeEvents.filter(e => timeStep - e.time < 20);
+        recentMerges.forEach(e => {
+            const age = timeStep - e.time;
+            const alpha = 1 - age / 20;
+            const radius = 10 + age * 3;
+            ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.6})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(e.position.x, e.position.y, radius, 0, Math.PI * 2);
+            ctx.stroke();
+        });
+
+        // Store areas for analysis
+        alive.forEach(p => {
+            const area = voronoi.areas.get(p.id) || 0;
+            p.voronoiAreaHistory.push({t: timeStep, area});
+        });
+
+        return voronoi.areas;
+    }
+
+    function renderSpacetimeView(canvas, ctx) {
+        const width = canvas.width;
+        const height = canvas.height;
+
+        ctx.fillStyle = '#0a0a0f';
+        ctx.fillRect(0, 0, width, height);
+
+        if (history.length < 2) return;
+
+        // Spacetime diagram: X axis = space (projected 1D), Y axis = time (going down)
+        const maxTime = history.length;
+        const timeScale = height / Math.max(maxTime, 100);
+
+        // Draw grid
+        ctx.strokeStyle = '#1a1a2a';
+        ctx.lineWidth = 0.5;
+        for (let t = 0; t < maxTime; t += 10) {
+            const y = t * timeScale;
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+        }
+
+        // Draw light cone boundaries (45-degree lines from merge events)
+        mergeEvents.forEach(e => {
+            const t = e.time;
+            const x = e.position.x * (width / mainCanvas.width);
+            const y = t * timeScale;
+
+            // Forward light cone edges
+            ctx.strokeStyle = 'rgba(255, 200, 50, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+
+            // Left cone edge
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x - (height - y), height);
+            ctx.stroke();
+
+            // Right cone edge
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + (height - y), height);
+            ctx.stroke();
+
+            ctx.setLineDash([]);
+
+            // Merge marker
+            ctx.fillStyle = 'rgba(255, 200, 50, 0.8)';
+            ctx.beginPath();
+            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        // Draw worldlines from history
+        const allParticleIds = new Set();
+        history.forEach(snap => {
+            snap.particles.forEach(p => allParticleIds.add(p.id));
+        });
+
+        allParticleIds.forEach(id => {
+            // Find the color for this particle
+            const firstAppearance = history.find(s => s.particles.find(p => p.id === id));
+            if (!firstAppearance) return;
+            const pData = firstAppearance.particles.find(p => p.id === id);
+            const color = PALETTE[id % PALETTE.length];
+
+            ctx.strokeStyle = color + 'cc';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            let started = false;
+
+            for (let t = 0; t < history.length; t++) {
+                const snap = history[t];
+                const p = snap.particles.find(pp => pp.id === id);
+                if (p) {
+                    const x = p.x * (width / mainCanvas.width);
+                    const y = t * timeScale;
+                    if (!started) {
+                        ctx.moveTo(x, y);
+                        started = true;
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+            }
+            ctx.stroke();
+        });
+
+        // Voronoi width bands (showing how area changes over time)
+        // Draw semi-transparent bands proportional to sqrt(area)
+        const alive = particles.filter(p => p.alive);
+        alive.forEach(p => {
+            if (p.voronoiAreaHistory.length < 2) return;
+            ctx.fillStyle = p.color + '15';
+            ctx.beginPath();
+
+            const totalArea = mainCanvas.width * mainCanvas.height;
+
+            for (let i = 0; i < p.voronoiAreaHistory.length; i++) {
+                const entry = p.voronoiAreaHistory[i];
+                const fraction = entry.area / totalArea;
+                const bandWidth = fraction * width * 0.8;
+                const trailEntry = p.trail[Math.min(i, p.trail.length - 1)];
+                const centerX = trailEntry ? trailEntry.x * (width / mainCanvas.width) : width / 2;
+                const y = entry.t * timeScale;
+
+                if (i === 0) {
+                    ctx.moveTo(centerX - bandWidth / 2, y);
+                } else {
+                    ctx.lineTo(centerX - bandWidth / 2, y);
+                }
+            }
+
+            for (let i = p.voronoiAreaHistory.length - 1; i >= 0; i--) {
+                const entry = p.voronoiAreaHistory[i];
+                const fraction = entry.area / totalArea;
+                const bandWidth = fraction * width * 0.8;
+                const trailEntry = p.trail[Math.min(i, p.trail.length - 1)];
+                const centerX = trailEntry ? trailEntry.x * (width / mainCanvas.width) : width / 2;
+                const y = entry.t * timeScale;
+                ctx.lineTo(centerX + bandWidth / 2, y);
+            }
+
+            ctx.closePath();
+            ctx.fill();
+        });
+
+        // Labels
+        ctx.fillStyle = '#666';
+        ctx.font = '10px monospace';
+        ctx.fillText('← space →', width / 2 - 30, height - 5);
+        ctx.save();
+        ctx.translate(12, height / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText('← time →', -20, 0);
+        ctx.restore();
+    }
+
+    // --- Simulation Step ---
+    // --- Gravitational interaction ---
+    // F = G * m1 * m2 / r^2, with exponential falloff beyond gravityRange
+    function applyGravity(alive) {
+        const G = params.gravityStrength * 500; // Scale up for pixel-space distances
+        const range = params.gravityRange;
+        if (G === 0) return;
+
+        for (let i = 0; i < alive.length; i++) {
+            for (let j = i + 1; j < alive.length; j++) {
+                const pi = alive[i];
+                const pj = alive[j];
+                const dx = pj.x - pi.x;
+                const dy = pj.y - pi.y;
+                const distSq = dx * dx + dy * dy;
+                const dist = Math.sqrt(distSq);
+
+                if (dist < 1) continue; // avoid singularity
+
+                // Gravitational force with exponential falloff
+                // Using 1/r instead of 1/r^2 for better visibility at pixel scale
+                const softening = 20; // prevents extreme forces at close range
+                const force = G * pi.mass * pj.mass / (dist + softening) * Math.exp(-dist / range);
+
+                // Unit vector from i to j
+                const fx = force * dx / dist;
+                const fy = force * dy / dist;
+
+                // Apply acceleration (F/m)
+                pi.vx += fx / pi.mass;
+                pi.vy += fy / pi.mass;
+                pj.vx -= fx / pj.mass;
+                pj.vy -= fy / pj.mass;
+            }
+        }
+
+        // Enforce speed limit after gravity
+        alive.forEach(p => {
+            const spd = p.speed();
+            if (spd > params.speedLimit) {
+                p.vx = (p.vx / spd) * params.speedLimit;
+                p.vy = (p.vy / spd) * params.speedLimit;
+            }
+        });
+    }
+
+    function simulationStep() {
+        const width = mainCanvas.width;
+        const height = mainCanvas.height;
+        const alive = particles.filter(p => p.alive);
+
+        if (alive.length <= 1) {
+            running = false;
+            document.getElementById('btnPlay').classList.remove('active');
+            return;
+        }
+
+        // Apply gravitational attraction between particles
+        applyGravity(alive);
+
+        // Advance particles
+        alive.forEach(p => p.step(1, width, height));
+
+        // Check interactions
+        const merges = checkInteractions(alive, params.interactionRadius);
+        merges.forEach(m => {
+            mergeEvents.push(m);
+            logEvent(m);
+        });
+
+        // Record snapshot for spacetime view
+        const aliveNow = particles.filter(p => p.alive);
+        history.push({
+            particles: aliveNow.map(p => ({id: p.id, x: p.x, y: p.y, vx: p.vx, vy: p.vy})),
+            time: timeStep
+        });
+
+        timeStep++;
+        updateStats(aliveNow);
+    }
+
+    // --- UI Updates ---
+    function updateStats(alive) {
+        document.getElementById('statTime').textContent = timeStep;
+        document.getElementById('statParticles').textContent = alive ? alive.length : particles.filter(p => p.alive).length;
+        document.getElementById('statMerges').textContent = mergeEvents.length;
+        // Mobile stats
+        if (document.getElementById('mStatTime')) {
+            document.getElementById('mStatTime').textContent = timeStep;
+            document.getElementById('mStatParticles').textContent = alive ? alive.length : particles.filter(p => p.alive).length;
+            document.getElementById('mStatMerges').textContent = mergeEvents.length;
+        }
+
+        if (alive && alive.length > 0) {
+            const areas = alive.map(p => {
+                const hist = p.voronoiAreaHistory;
+                return hist.length > 0 ? hist[hist.length - 1].area : 0;
+            });
+            const avg = areas.reduce((a, b) => a + b, 0) / areas.length;
+            const variance = areas.reduce((a, b) => a + (b - avg) ** 2, 0) / areas.length;
+            document.getElementById('statAvgArea').textContent = Math.round(avg).toLocaleString();
+            document.getElementById('statAreaDev').textContent = Math.round(Math.sqrt(variance)).toLocaleString();
+
+            // Light cone analysis: track area changes after merges
+            if (mergeEvents.length > 0) {
+                let maxExpansion = 0;
+                let affectedCount = 0;
+                alive.forEach(p => {
+                    const hist = p.voronoiAreaHistory;
+                    if (hist.length > 10) {
+                        const recent = hist[hist.length - 1].area;
+                        const earlier = hist[Math.max(0, hist.length - 10)].area;
+                        const change = (recent - earlier) / (earlier || 1);
+                        if (Math.abs(change) > 0.05) affectedCount++;
+                        maxExpansion = Math.max(maxExpansion, change);
+                    }
+                });
+                document.getElementById('statMaxExpansion').textContent = (maxExpansion * 100).toFixed(1) + '%';
+                document.getElementById('statAffected').textContent = affectedCount + '/' + alive.length;
+            }
+        }
+    }
+
+    function logEvent(merge) {
+        const log = document.getElementById('eventLog');
+        const div = document.createElement('div');
+        div.className = 'event';
+        div.innerHTML = `<span class="time">t=${merge.time}</span> <span class="desc">P${merge.absorbed} → P${merge.survivor} (m=${merge.newMass.toFixed(1)})</span>`;
+        log.insertBefore(div, log.firstChild);
+        if (log.children.length > 50) log.removeChild(log.lastChild);
+    }
+
+    function updateLegend() {
+        const legend = document.getElementById('legend');
+        legend.innerHTML = '<h2>Particles</h2>';
+        particles.forEach(p => {
+            const item = document.createElement('div');
+            item.className = 'legend-item';
+            item.innerHTML = `<div class="legend-swatch" style="background:${p.color}"></div>
+                <span>P${p.id} ${!p.alive ? '(merged)' : ''}</span>`;
+            legend.appendChild(item);
+        });
+    }
+
+    // --- Resize handling ---
+    function resize() {
+        const container = document.getElementById('canvasContainer');
+        const rect = container.getBoundingClientRect();
+
+        if (viewMode === 'split') {
+            mainCanvas.width = rect.width;
+            mainCanvas.height = rect.height * 0.55;
+            mainCanvas.style.height = '55%';
+            spacetimeCanvas.width = rect.width;
+            spacetimeCanvas.height = rect.height * 0.45;
+            spacetimeCanvas.style.height = '45%';
+            spacetimeCanvas.style.display = 'block';
+            mainCanvas.style.display = 'block';
+        } else if (viewMode === 'spacetime') {
+            spacetimeCanvas.width = rect.width;
+            spacetimeCanvas.height = rect.height;
+            spacetimeCanvas.style.height = '100%';
+            spacetimeCanvas.style.display = 'block';
+            mainCanvas.style.display = 'none';
+        } else {
+            mainCanvas.width = rect.width;
+            mainCanvas.height = rect.height;
+            mainCanvas.style.height = '100%';
+            mainCanvas.style.display = 'block';
+            spacetimeCanvas.style.display = 'none';
+        }
+    }
+
+    // --- Main loop ---
+    function render() {
+        if (viewMode === 'top' || viewMode === 'split') {
+            ctx.fillStyle = '#0a0a0f';
+            ctx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+            renderTopView(mainCanvas, ctx);
+        }
+        if (viewMode === 'spacetime' || viewMode === 'split') {
+            renderSpacetimeView(spacetimeCanvas, stCtx);
+        }
+    }
+
+    function loop() {
+        if (running) {
+            simulationStep();
+        }
+        render();
+        animId = requestAnimationFrame(loop);
+    }
+
+    // --- Controls ---
+    document.getElementById('particleCount').addEventListener('input', e => {
+        params.particleCount = parseInt(e.target.value);
+        document.getElementById('particleCountVal').textContent = params.particleCount;
+    });
+    document.getElementById('speedLimit').addEventListener('input', e => {
+        params.speedLimit = parseInt(e.target.value);
+        document.getElementById('speedLimitVal').textContent = params.speedLimit;
+    });
+    document.getElementById('brownian').addEventListener('input', e => {
+        params.brownianSigma = parseInt(e.target.value) / 100;
+        document.getElementById('brownianVal').textContent = params.brownianSigma.toFixed(2);
+    });
+    document.getElementById('interactionRadius').addEventListener('input', e => {
+        params.interactionRadius = parseInt(e.target.value);
+        document.getElementById('interactionRadiusVal').textContent = params.interactionRadius;
+    });
+    document.getElementById('lookahead').addEventListener('input', e => {
+        params.lookahead = parseInt(e.target.value);
+        document.getElementById('lookaheadVal').textContent = params.lookahead;
+    });
+    document.getElementById('gravityRange').addEventListener('input', e => {
+        params.gravityRange = parseInt(e.target.value);
+        document.getElementById('gravityRangeVal').textContent = params.gravityRange;
+    });
+    document.getElementById('gravityStrength').addEventListener('input', e => {
+        params.gravityStrength = parseInt(e.target.value) / 2000;
+        document.getElementById('gravityStrengthVal').textContent = params.gravityStrength.toFixed(3);
+    });
+
+    document.getElementById('btnPlay').addEventListener('click', () => {
+        running = !running;
+        document.getElementById('btnPlay').classList.toggle('active', running);
+        document.getElementById('btnPlay').textContent = running ? '▶ Play' : '⏸ Pause';
+        if (window.innerWidth <= 768) { header.classList.add('collapsed'); setTimeout(resize, 350); }
+    });
+
+    document.getElementById('btnStep').addEventListener('click', () => {
+        running = false;
+        document.getElementById('btnPlay').classList.remove('active');
+        document.getElementById('btnPlay').textContent = '⏸ Pause';
+        simulationStep();
+        render();
+    });
+
+    document.getElementById('btnReset').addEventListener('click', () => {
+        if (window.innerWidth <= 768) { header.classList.add('collapsed'); setTimeout(resize, 350); }
+        resize();
+        initParticles(params.particleCount, mainCanvas.width, mainCanvas.height);
+        running = true;
+        document.getElementById('btnPlay').classList.add('active');
+        document.getElementById('btnPlay').textContent = '▶ Play';
+    });
+
+    document.getElementById('btnViewTop').addEventListener('click', () => {
+        viewMode = 'top';
+        document.getElementById('btnViewTop').classList.add('active');
+        document.getElementById('btnViewSpacetime').classList.remove('active');
+        document.getElementById('btnViewSplit').classList.remove('active');
+        resize();
+    });
+    document.getElementById('btnViewSpacetime').addEventListener('click', () => {
+        viewMode = 'spacetime';
+        document.getElementById('btnViewTop').classList.remove('active');
+        document.getElementById('btnViewSpacetime').classList.add('active');
+        document.getElementById('btnViewSplit').classList.remove('active');
+        resize();
+    });
+    document.getElementById('btnViewSplit').addEventListener('click', () => {
+        viewMode = 'split';
+        document.getElementById('btnViewTop').classList.remove('active');
+        document.getElementById('btnViewSpacetime').classList.remove('active');
+        document.getElementById('btnViewSplit').classList.add('active');
+        resize();
+    });
+
+    // --- Init ---
+    window.addEventListener('resize', resize);
+
+    // Mobile: collapse/expand header on tap
+    const header = document.querySelector('header');
+    const h1 = document.querySelector('header h1');
+    h1.addEventListener('click', () => {
+        header.classList.toggle('collapsed');
+        setTimeout(resize, 350);
+    });
+    // Start collapsed on mobile
+    if (window.innerWidth <= 768) {
+        header.classList.add('collapsed');
+    }
+
+    // Mobile controls toggle
+    document.getElementById('btnMobileControls').addEventListener('click', () => {
+        header.classList.toggle('collapsed');
+        setTimeout(resize, 350);
+    });
+
+    // Prevent pull-to-refresh on mobile
+    document.body.addEventListener('touchmove', e => {
+        if (e.target.tagName === 'CANVAS') e.preventDefault();
+    }, { passive: false });
+
+    resize();
+    initParticles(params.particleCount, mainCanvas.width, mainCanvas.height);
+    loop();
+    </script>
+</body>
+</html>
