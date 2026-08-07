@@ -495,7 +495,7 @@
         // Pre-compute envelope parameters for each particle
         const envelopes = particles.map(p => {
             const spd = p.speed();
-            const dirX = spd > 0.01 ? p.vx / s 6pd : 0;
+            const dirX = spd > 0.01 ? p.vx / spd : 0;
             const dirY = spd > 0.01 ? p.vy / spd : 0;
 
             // Noise spread (diffusion radius)
