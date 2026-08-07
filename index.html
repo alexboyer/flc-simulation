@@ -281,18 +281,18 @@
             </div>
             <div class="control-group">
                 <label>Speed Limit (c):</label>
-                <input type="range" id="speedLimit" min="1" max="10" value="7">
-                <span id="speedLimitVal">7</span>
+                <input type="range" id="speedLimit" min="1" max="10" value="10">
+                <span id="speedLimitVal">10</span>
             </div>
             <div class="control-group">
                 <label>Brownian σ:</label>
-                <input type="range" id="brownian" min="0" max="100" value="2">
-                <span id="brownianVal">0.02</span>
+                <input type="range" id="brownian" min="0" max="100" value="15">
+                <span id="brownianVal">0.15</span>
             </div>
             <div class="control-group">
                 <label>Interaction Radius:</label>
-                <input type="range" id="interactionRadius" min="5" max="50" value="5">
-                <span id="interactionRadiusVal">5</span>
+                <input type="range" id="interactionRadius" min="1" max="5" value="2">
+                <span id="interactionRadiusVal">2</span>
             </div>
             <div class="control-group">
                 <label>Cone Lookahead:</label>
@@ -306,8 +306,11 @@
             </div>
             <div class="control-group">
                 <label>Gravity Strength:</label>
-                <input type="range" id="gravityStrength" min="0" max="100" value="8">
-                <span id="gravityStrengthVal">0.004</span>
+                <input type="range" id="gravityStrength" min="0" max="100" value="50">
+                <span id="gravityStrengthVal">0.025</span>
+            </div>
+            <div class="control-group">
+                <button id="btnGravityViz">Show Wells</button>
             </div>
             <div class="control-group">
                 <button id="btnPlay" class="active">▶ Play</button>
@@ -375,16 +378,17 @@
     let running = true;
     let animId = null;
     let viewMode = 'top'; // 'top', 'spacetime', 'split'
+    let showGravityWells = false;
 
     // --- Parameters ---
     let params = {
         particleCount: 8,
-        speedLimit: 7,
-        brownianSigma: 0.02,
-        interactionRadius: 5,
+        speedLimit: 10,
+        brownianSigma: 0.15,
+        interactionRadius: 2,
         lookahead: 1,  // How far ahead (in time steps) to project velocity for cone shape
         gravityRange: 500,    // Falloff distance for gravitational influence
-        gravityStrength: 0.004 // Gravitational constant G (range 0–0.05)
+        gravityStrength: 0.025 // Gravitational constant G (range 0–0.05)
     };
 
     // --- Color palette for particles ---
@@ -449,22 +453,28 @@
             this.x += this.vx * dt;
             this.y += this.vy * dt;
 
-            // Elastic boundary reflection
-            if (this.x < 0) { this.x = -this.x; this.vx = Math.abs(this.vx); }
-            if (this.x > width) { this.x = 2 * width - this.x; this.vx = -Math.abs(this.vx); }
-            if (this.y < 0) { this.y = -this.y; this.vy = Math.abs(this.vy); }
-            if (this.y > height) { this.y = 2 * height - this.y; this.vy = -Math.abs(this.vy); }
+            // Toroidal wrapping (Asteroids-style)
+            if (this.x < 0) this.x += width;
+            if (this.x > width) this.x -= width;
+            if (this.y < 0) this.y += height;
+            if (this.y > height) this.y -= height;
 
             this.trail.push({x: this.x, y: this.y, t: timeStep});
         }
     }
 
-    // --- Voronoi computation using velocity-projected directional distance ---
-    // The "forward light cone" of each particle is determined by:
-    //   1. Project particle forward by velocity * lookahead (directional bias)
-    //   2. Weight distance inversely by speed (faster = more reach)
-    // Effective distance: |point - projected_position| / (1 + speed/c)
-    // This makes cells stretch in the direction of travel and expand for faster particles.
+    // --- Voronoi computation using probability-envelope distance ---
+    // Each particle's forward light cone = the set of all positions reachable given:
+    //   - Current velocity (deterministic drift)
+    //   - Brownian noise (stochastic spread, σ√T in all directions)
+    // The envelope is egg-shaped: large forward lobe (drift + diffusion),
+    // small rear lobe (diffusion overcoming drift), medium lateral spread.
+    //
+    // For direction θ relative to velocity, max reach at time horizon T:
+    //   forward:  v*T + k*σ*√T
+    //   backward: max(k*σ*√T - v*T, min_radius)
+    //   perp:     k*σ*√T
+    // We use normalized distance (dist / directional_max_reach) for the Voronoi metric.
 
     function computeVoronoi(particles, width, height) {
         const gridSize = 4;
@@ -472,24 +482,52 @@
         const gh = Math.ceil(height / gridSize);
         const grid = new Int32Array(gw * gh);
         const areas = new Map();
-        const T = params.lookahead; // lookahead time steps
         const c = params.speedLimit;
+        const sigma = params.brownianSigma;
+
+        // Time horizon for envelope computation (how far ahead we project possible paths)
+        const T_horizon = 30 + params.lookahead * 10;
+        const sqrtT = Math.sqrt(T_horizon);
+        const k = 3.0; // confidence factor (3-sigma covers ~99.7% of paths)
 
         particles.forEach(p => areas.set(p.id, 0));
 
-        // Pre-compute projected positions and speed weights
-        const projected = particles.map(p => ({
-            // Project position forward along velocity vector
-            px: p.x + p.vx * T,
-            py: p.y + p.vy * T,
-            // Speed-based weight: faster particles claim more space
-            weight: 1 + (p.speed() / c)
-        }));
+        // Pre-compute envelope parameters for each particle
+        const envelopes = particles.map(p => {
+            const spd = p.speed();
+            const dirX = spd > 0.01 ? p.vx / spd : 0;
+            const dirY = spd > 0.01 ? p.vy / spd : 0;
 
-        // Certainty grid: how dominant is the nearest particle over the second-nearest
+            // Noise spread (diffusion radius)
+            const noiseSpread = k * sigma * sqrtT * 15; // scale for pixel space
+            // Drift distance
+            const drift = spd * T_horizon * 0.8;
+
+            // Directional max reach:
+            const forwardReach = drift + noiseSpread + 20; // min 20px
+            const backwardReach = Math.max(noiseSpread - drift * 0.5, 20); // smaller behind
+            const perpReach = noiseSpread + drift * 0.2 + 20; // lateral spread
+
+            return {
+                x: p.x,
+                y: p.y,
+                dirX,
+                dirY,
+                forwardReach,
+                backwardReach,
+                perpReach,
+                // Cosine harmonic coefficients for smooth egg shape
+                // r(θ) = c0 + c1*cos(θ) + c2*cos(2θ)
+                c0: (forwardReach + backwardReach + 2 * perpReach) / 4,
+                c1: (forwardReach - backwardReach) / 2,
+                c2: (forwardReach + backwardReach - 2 * perpReach) / 4,
+                spd
+            };
+        });
+
+        // Certainty grid
         const certainty = new Float32Array(gw * gh);
 
-        // Assign each grid cell to the particle whose projected cone reaches it first
         for (let gy = 0; gy < gh; gy++) {
             for (let gx = 0; gx < gw; gx++) {
                 const px = (gx + 0.5) * gridSize;
@@ -499,26 +537,35 @@
                 let nearest = -1;
 
                 for (let i = 0; i < particles.length; i++) {
-                    const proj = projected[i];
-                    const dx = px - proj.px;
-                    const dy = py - proj.py;
-                    // Effective distance: raw distance divided by speed weight
-                    // Lower effective distance = this particle "reaches" this point sooner
-                    const d = (dx * dx + dy * dy) / (proj.weight * proj.weight);
-                    if (d < minDist) {
+                    const env = envelopes[i];
+                    const dx = px - env.x;
+                    const dy = py - env.y;
+                    const rawDist = Math.sqrt(dx * dx + dy * dy) + 0.001;
+
+                    // Compute cos(angle) between velocity direction and direction to point
+                    const cosAngle = (dx * env.dirX + dy * env.dirY) / rawDist;
+
+                    // Smooth egg envelope using cosine harmonics (no piecewise seams)
+                    // r(θ) = c0 + c1*cos(θ) + c2*cos(2θ), where cos(2θ) = 2cos²(θ)-1
+                    const cos2Angle = 2 * cosAngle * cosAngle - 1;
+                    const maxReachInDir = Math.max(env.c0 + env.c1 * cosAngle + env.c2 * cos2Angle, 10);
+
+                    // Normalized distance: 0 = at particle, 1 = at envelope edge
+                    const normDist = rawDist / maxReachInDir;
+
+                    if (normDist < minDist) {
                         secondDist = minDist;
-                        minDist = d;
+                        minDist = normDist;
                         nearest = i;
-                    } else if (d < secondDist) {
-                        secondDist = d;
+                    } else if (normDist < secondDist) {
+                        secondDist = normDist;
                     }
                 }
 
                 grid[gy * gw + gx] = nearest;
-                // Certainty: ratio of how much closer nearest is vs second-nearest
-                // 1.0 = deep inside cell (high certainty), 0.0 = on boundary (ambiguous)
-                const dN = Math.sqrt(minDist);
-                const dS = Math.sqrt(secondDist);
+                // Certainty based on normalized distances
+                const dN = minDist;
+                const dS = secondDist;
                 certainty[gy * gw + gx] = (dS - dN) / (dS + dN + 0.001);
 
                 const id = particles[nearest].id;
@@ -526,7 +573,7 @@
             }
         }
 
-        return { grid, gw, gh, gridSize, areas, certainty };
+        return { grid, gw, gh, gridSize, areas, certainty, envelopes };
     }
 
     // --- Interaction / Merge Logic ---
@@ -629,17 +676,38 @@
             return {r: d[0], g: d[1], b: d[2]};
         });
 
-        // Draw Voronoi cells with certainty gradient
-        // High certainty (deep in cell) = strong color, low certainty (boundary) = fades out
+        // Draw Voronoi cells with probability-envelope gradient
+        // The gradient represents how likely the particle is to reach that point:
+        // Bright at center (certain), fading to black at the envelope edge.
+        // Envelope shape is egg-like: large forward lobe, small rear lobe.
         for (let gy = 0; gy < voronoi.gh; gy++) {
             for (let gx = 0; gx < voronoi.gw; gx++) {
                 const nearest = voronoi.grid[gy * voronoi.gw + gx];
                 const col = colorCache[nearest];
                 const cert = voronoi.certainty[gy * voronoi.gw + gx];
+                const env = voronoi.envelopes[nearest];
+                const p = alive[nearest];
 
-                // Map certainty to alpha: high certainty = visible, fades to black at edges
-                // Use a power curve for dramatic falloff to zero
-                const alpha = Math.floor(200 * Math.pow(cert, 0.6));
+                // Compute normalized distance from particle to this cell
+                // (how far through the envelope we are: 0 = at particle, 1 = at edge)
+                const cellX = (gx + 0.5) * voronoi.gridSize;
+                const cellY = (gy + 0.5) * voronoi.gridSize;
+                const dx = cellX - p.x;
+                const dy = cellY - p.y;
+                const rawDist = Math.sqrt(dx * dx + dy * dy) + 0.001;
+
+                const cosAngle = (dx * env.dirX + dy * env.dirY) / rawDist;
+
+                // Smooth egg envelope (same cosine harmonic formula)
+                const cos2Angle = 2 * cosAngle * cosAngle - 1;
+                const maxReachInDir = Math.max(env.c0 + env.c1 * cosAngle + env.c2 * cos2Angle, 10);
+
+                // Normalized position within envelope (0 = center, 1 = edge)
+                const normPos = Math.min(rawDist / maxReachInDir, 1.0);
+
+                // Radial falloff only — pure egg shape without certainty distortion
+                const radialFalloff = Math.max(0, 1 - normPos);
+                const alpha = Math.floor(200 * Math.pow(radialFalloff, 1.4));
 
                 // Fill the grid cell
                 for (let py = gy * voronoi.gridSize; py < Math.min((gy + 1) * voronoi.gridSize, height); py++) {
@@ -654,42 +722,29 @@
             }
         }
 
-        // Draw Voronoi edges (where certainty is lowest — the ambiguous boundaries)
-        for (let gy = 0; gy < voronoi.gh - 1; gy++) {
-            for (let gx = 0; gx < voronoi.gw - 1; gx++) {
-                const curr = voronoi.grid[gy * voronoi.gw + gx];
-                const right = voronoi.grid[gy * voronoi.gw + gx + 1];
-                const below = voronoi.grid[(gy + 1) * voronoi.gw + gx];
-
-                if (curr !== right || curr !== below) {
-                    const cert = voronoi.certainty[gy * voronoi.gw + gx];
-                    // Edge brightness inversely proportional to certainty
-                    const edgeAlpha = Math.floor(80 + 160 * (1 - cert));
-                    for (let py = gy * voronoi.gridSize; py < Math.min((gy + 1) * voronoi.gridSize, height); py++) {
-                        for (let px = gx * voronoi.gridSize; px < Math.min((gx + 1) * voronoi.gridSize, width); px++) {
-                            const idx = (py * width + px) * 4;
-                            data[idx] = 0;
-                            data[idx + 1] = 0;
-                            data[idx + 2] = 0;
-                            data[idx + 3] = edgeAlpha;
-                        }
-                    }
-                }
-            }
-        }
+        // No boundary lines — cones fade naturally to background for smooth transitions
 
         ctx.putImageData(imageData, 0, 0);
 
-        // Draw particle trails
+        // Draw particle trails (break on wrap)
         alive.forEach(p => {
             if (p.trail.length > 1) {
-                ctx.beginPath();
                 ctx.strokeStyle = p.color + '60';
                 ctx.lineWidth = 1;
                 const start = Math.max(0, p.trail.length - 60);
+                ctx.beginPath();
                 ctx.moveTo(p.trail[start].x, p.trail[start].y);
                 for (let i = start + 1; i < p.trail.length; i++) {
-                    ctx.lineTo(p.trail[i].x, p.trail[i].y);
+                    const dx = Math.abs(p.trail[i].x - p.trail[i-1].x);
+                    const dy = Math.abs(p.trail[i].y - p.trail[i-1].y);
+                    // Break the line if the jump is too large (wrap occurred)
+                    if (dx > width * 0.5 || dy > height * 0.5) {
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.moveTo(p.trail[i].x, p.trail[i].y);
+                    } else {
+                        ctx.lineTo(p.trail[i].x, p.trail[i].y);
+                    }
                 }
                 ctx.stroke();
             }
@@ -740,6 +795,36 @@
             ctx.arc(e.position.x, e.position.y, radius, 0, Math.PI * 2);
             ctx.stroke();
         });
+
+        // Gravity well visualization overlay
+        if (showGravityWells) {
+            const G = params.gravityStrength * 500;
+            const range = params.gravityRange;
+            alive.forEach(p => {
+                // Alpha scales with G * mass — stronger/heavier = more visible well
+                const wellIntensity = Math.min(0.5, G * p.mass * 0.003);
+
+                // Draw radial gradient representing gravity field
+                const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, range);
+                gradient.addColorStop(0, `rgba(255, 255, 255, ${wellIntensity})`);
+                gradient.addColorStop(0.3, `rgba(200, 200, 255, ${wellIntensity * 0.5})`);
+                gradient.addColorStop(0.7, `rgba(150, 150, 255, ${wellIntensity * 0.15})`);
+                gradient.addColorStop(1, 'rgba(100, 100, 200, 0)');
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, range, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Draw falloff radius as a circle outline
+                ctx.strokeStyle = `rgba(150, 150, 255, 0.3)`;
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, range, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            });
+        }
 
         // Store areas for analysis
         alive.forEach(p => {
@@ -1112,6 +1197,11 @@
     document.getElementById('gravityStrength').addEventListener('input', e => {
         params.gravityStrength = parseInt(e.target.value) / 2000;
         document.getElementById('gravityStrengthVal').textContent = params.gravityStrength.toFixed(3);
+    });
+    document.getElementById('btnGravityViz').addEventListener('click', () => {
+        showGravityWells = !showGravityWells;
+        document.getElementById('btnGravityViz').classList.toggle('active', showGravityWells);
+        document.getElementById('btnGravityViz').textContent = showGravityWells ? 'Hide Wells' : 'Show Wells';
     });
 
     document.getElementById('btnPlay').addEventListener('click', () => {
