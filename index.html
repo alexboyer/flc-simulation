@@ -871,11 +871,20 @@
             ctx.arc(p.x, p.y, 8 + p.mass * 2, 0, Math.PI * 2);
             ctx.fill();
 
-            // Core
+            // Core (size scales with mass)
             ctx.fillStyle = p.color;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 3 + p.mass, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, 3 + p.mass * 1.5, 0, Math.PI * 2);
             ctx.fill();
+
+            // Interaction radius indicator
+            ctx.strokeStyle = p.color + '55';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 3]);
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, params.interactionRadius, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
 
             // Velocity arrow
             ctx.strokeStyle = p.color + 'aa';
