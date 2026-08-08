@@ -506,9 +506,9 @@
             const drift = spd * T_horizon * 0.8;
 
             // Directional max reach:
-            const forwardReach = drift + noiseSpread + 20; // min 20px
-            const backwardReach = Math.max(noiseSpread - drift * 0.5, 20); // smaller behind
-            const perpReach = noiseSpread + drift * 0.2 + 20; // lateral spread
+            const forwardReach = drift + noiseSpread + 20;
+            const backwardReach = Math.max(noiseSpread * 0.8, 8); // near-zero without noise
+            const perpReach = noiseSpread + 8; // lateral spread is purely noise-driven
 
             return {
                 x: p.x,
@@ -518,11 +518,8 @@
                 forwardReach,
                 backwardReach,
                 perpReach,
-                // Cosine harmonic coefficients for smooth egg shape
-                // r(θ) = c0 + c1*cos(θ) + c2*cos(2θ)
-                c0: (forwardReach + backwardReach + 2 * perpReach) / 4,
-                c1: (forwardReach - backwardReach) / 2,
-                c2: (forwardReach + backwardReach - 2 * perpReach) / 4,
+                // Beam sharpness: higher when aspect ratio is extreme (tight beam)
+                sharpness: Math.max(1, Math.log2(forwardReach / (perpReach + 1)) * 1.5),
                 spd
             };
         });
@@ -547,10 +544,10 @@
                     // Compute cos(angle) between velocity direction and direction to point
                     const cosAngle = (dx * env.dirX + dy * env.dirY) / rawDist;
 
-                    // Smooth egg envelope using cosine harmonics (no piecewise seams)
-                    // r(θ) = c0 + c1*cos(θ) + c2*cos(2θ), where cos(2θ) = 2cos²(θ)-1
-                    const cos2Angle = 2 * cosAngle * cosAngle - 1;
-                    const maxReachInDir = Math.max(env.c0 + env.c1 * cosAngle + env.c2 * cos2Angle, 10);
+                    // Power-weighted beam: tight when noise is low, round when noise is high
+                    const halfCos = (1 + cosAngle) * 0.5;
+                    const shaped = Math.pow(halfCos, env.sharpness);
+                    const maxReachInDir = Math.max(env.backwardReach + (env.forwardReach - env.backwardReach) * shaped, 5);
 
                     // Normalized distance: 0 = at particle, 1 = at envelope edge
                     const normDist = rawDist / maxReachInDir;
@@ -702,8 +699,9 @@
                     const rawDist = Math.sqrt(dx * dx + dy * dy) + 0.001;
 
                     const cosAngle = (dx * env.dirX + dy * env.dirY) / rawDist;
-                    const cos2Angle = 2 * cosAngle * cosAngle - 1;
-                    const maxReachInDir = Math.max(env.c0 + env.c1 * cosAngle + env.c2 * cos2Angle, 10);
+                    const halfCos = (1 + cosAngle) * 0.5;
+                    const shaped = Math.pow(halfCos, env.sharpness);
+                    const maxReachInDir = Math.max(env.backwardReach + (env.forwardReach - env.backwardReach) * shaped, 5);
 
                     const normPos = rawDist / maxReachInDir;
                     if (normPos >= 1.0) continue; // outside this particle's envelope
@@ -756,8 +754,9 @@
                         const dy = cellY - env.y;
                         const rawDist = Math.sqrt(dx * dx + dy * dy) + 0.001;
                         const cosAngle = (dx * env.dirX + dy * env.dirY) / rawDist;
-                        const cos2Angle = 2 * cosAngle * cosAngle - 1;
-                        const maxReachInDir = Math.max(env.c0 + env.c1 * cosAngle + env.c2 * cos2Angle, 10);
+                        const halfCos = (1 + cosAngle) * 0.5;
+                        const shaped = Math.pow(halfCos, env.sharpness);
+                        const maxReachInDir = Math.max(env.backwardReach + (env.forwardReach - env.backwardReach) * shaped, 5);
                         if (rawDist / maxReachInDir < 1.0) coverCount++;
                         if (coverCount >= 2) break;
                     }
@@ -773,16 +772,14 @@
                         const dyR = cellY - env.y;
                         const rawDistR = Math.sqrt(dxR * dxR + dyR * dyR) + 0.001;
                         const cosR = (dxR * env.dirX + dyR * env.dirY) / rawDistR;
-                        const cos2R = 2 * cosR * cosR - 1;
-                        const maxR = Math.max(env.c0 + env.c1 * cosR + env.c2 * cos2R, 10);
+                        const maxR = Math.max(env.backwardReach + (env.forwardReach - env.backwardReach) * Math.pow((1 + cosR) * 0.5, env.sharpness), 5);
                         if (rawDistR / maxR < 1.0) nCountR++;
                         // Down neighbor
                         const dxD = cellX - env.x;
                         const dyD = nCellY - env.y;
                         const rawDistD = Math.sqrt(dxD * dxD + dyD * dyD) + 0.001;
                         const cosD = (dxD * env.dirX + dyD * env.dirY) / rawDistD;
-                        const cos2D = 2 * cosD * cosD - 1;
-                        const maxD = Math.max(env.c0 + env.c1 * cosD + env.c2 * cos2D, 10);
+                        const maxD = Math.max(env.backwardReach + (env.forwardReach - env.backwardReach) * Math.pow((1 + cosD) * 0.5, env.sharpness), 5);
                         if (rawDistD / maxD < 1.0) nCountD++;
                     }
 
@@ -795,6 +792,48 @@
                     }
                 }
             }
+
+            // Show interaction probability at the midpoint between each overlapping pair
+            ctx.font = '11px monospace';
+            ctx.textAlign = 'center';
+            for (let i = 0; i < alive.length; i++) {
+                for (let j = i + 1; j < alive.length; j++) {
+                    const pi = alive[i];
+                    const pj = alive[j];
+                    const ei = voronoi.envelopes[i];
+                    const ej = voronoi.envelopes[j];
+
+                    // Check if envelopes overlap at midpoint
+                    const midX = (pi.x + pj.x) / 2;
+                    const midY = (pi.y + pj.y) / 2;
+
+                    // Compute normalized position for each particle at midpoint
+                    const dxi = midX - ei.x, dyi = midY - ei.y;
+                    const distI = Math.sqrt(dxi * dxi + dyi * dyi) + 0.001;
+                    const cosI = (dxi * ei.dirX + dyi * ei.dirY) / distI;
+                    const maxI = Math.max(ei.backwardReach + (ei.forwardReach - ei.backwardReach) * Math.pow((1 + cosI) * 0.5, ei.sharpness), 5);
+                    const normI = distI / maxI;
+
+                    const dxj = midX - ej.x, dyj = midY - ej.y;
+                    const distJ = Math.sqrt(dxj * dxj + dyj * dyj) + 0.001;
+                    const cosJ = (dxj * ej.dirX + dyj * ej.dirY) / distJ;
+                    const maxJ = Math.max(ej.backwardReach + (ej.forwardReach - ej.backwardReach) * Math.pow((1 + cosJ) * 0.5, ej.sharpness), 5);
+                    const normJ = distJ / maxJ;
+
+                    // Both envelopes reach the midpoint
+                    if (normI < 1.0 && normJ < 1.0) {
+                        // Probability = product of both particles' intensity at midpoint
+                        const probI = Math.pow(1 - normI, 1.4);
+                        const probJ = Math.pow(1 - normJ, 1.4);
+                        const prob = Math.min(99, Math.round(probI * probJ * 100));
+                        if (prob > 0) {
+                            ctx.fillStyle = `rgba(0, 255, 100, ${0.5 + prob * 0.005})`;
+                            ctx.fillText(`${prob}%`, midX, midY);
+                        }
+                    }
+                }
+            }
+            ctx.textAlign = 'left';
         }
 
         // Draw particle trails (break on wrap)
@@ -832,11 +871,20 @@
             ctx.arc(p.x, p.y, 8 + p.mass * 2, 0, Math.PI * 2);
             ctx.fill();
 
-            // Core
+            // Core (size scales with mass)
             ctx.fillStyle = p.color;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 3 + p.mass, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, 3 + p.mass * 1.5, 0, Math.PI * 2);
             ctx.fill();
+
+            // Interaction radius indicator
+            ctx.strokeStyle = p.color + '55';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 3]);
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, params.interactionRadius, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
 
             // Velocity arrow
             ctx.strokeStyle = p.color + 'aa';
@@ -872,18 +920,19 @@
             const G = params.gravityStrength * 500;
             const range = params.gravityRange;
             alive.forEach(p => {
-                // Alpha scales with G * mass — stronger/heavier = more visible well
+                // Heavier particles project influence further
+                const effectiveRange = range * (1 + Math.log2(p.mass));
                 const wellIntensity = Math.min(0.5, G * p.mass * 0.003);
 
                 // Draw radial gradient representing gravity field
-                const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, range);
+                const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, effectiveRange);
                 gradient.addColorStop(0, `rgba(255, 255, 255, ${wellIntensity})`);
                 gradient.addColorStop(0.3, `rgba(200, 200, 255, ${wellIntensity * 0.5})`);
                 gradient.addColorStop(0.7, `rgba(150, 150, 255, ${wellIntensity * 0.15})`);
                 gradient.addColorStop(1, 'rgba(100, 100, 200, 0)');
                 ctx.fillStyle = gradient;
                 ctx.beginPath();
-                ctx.arc(p.x, p.y, range, 0, Math.PI * 2);
+                ctx.arc(p.x, p.y, effectiveRange, 0, Math.PI * 2);
                 ctx.fill();
 
                 // Draw falloff radius as a circle outline
@@ -891,7 +940,7 @@
                 ctx.lineWidth = 1;
                 ctx.setLineDash([4, 4]);
                 ctx.beginPath();
-                ctx.arc(p.x, p.y, range, 0, Math.PI * 2);
+                ctx.arc(p.x, p.y, effectiveRange, 0, Math.PI * 2);
                 ctx.stroke();
                 ctx.setLineDash([]);
             });
