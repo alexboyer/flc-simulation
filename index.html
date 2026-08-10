@@ -291,7 +291,7 @@
             </div>
             <div class="control-group">
                 <label>Interaction Radius:</label>
-                <input type="range" id="interactionRadius" min="1" max="5" value="2">
+                <input type="range" id="interactionRadius" min="0" max="5" value="2">
                 <span id="interactionRadiusVal">2</span>
             </div>
             <div class="control-group">
@@ -592,7 +592,12 @@
                 const dy = toroidalDelta(particles[i].y - particles[j].y, h);
                 const dist = Math.sqrt(dx * dx + dy * dy);
 
-                if (dist < radius) {
+                // Interaction threshold = sum of both particle diameters + interaction distance
+                const ri = (3 + particles[i].mass * 1.5);
+                const rj = (3 + particles[j].mass * 1.5);
+                const threshold = ri + rj + radius;
+
+                if (dist < threshold) {
                     // Merge j into i (conservation of momentum)
                     const pi = particles[i];
                     const pj = particles[j];
@@ -654,6 +659,76 @@
         updateLegend();
     }
 
+    // --- Inline Web Worker for heavy envelope pixel computation ---
+    const workerCode = `
+    self.onmessage = function(e) {
+        const { width, height, gridSize, envelopes, colors } = e.data;
+        const gw = Math.ceil(width / gridSize);
+        const gh = Math.ceil(height / gridSize);
+        const pixelData = new Uint8ClampedArray(width * height * 4);
+        const n = envelopes.length;
+
+        for (let gy = 0; gy < gh; gy++) {
+            const cellY = (gy + 0.5) * gridSize;
+            for (let gx = 0; gx < gw; gx++) {
+                const cellX = (gx + 0.5) * gridSize;
+                let totalR = 0, totalG = 0, totalB = 0, totalA = 0;
+
+                for (let i = 0; i < n; i++) {
+                    const env = envelopes[i];
+                    const dx = cellX - env.x;
+                    const dy = cellY - env.y;
+                    const distSq = dx * dx + dy * dy;
+                    // Spatial cull
+                    if (distSq > env.maxReachSq) continue;
+
+                    const rawDist = Math.sqrt(distSq) + 0.001;
+                    const cosAngle = (dx * env.dirX + dy * env.dirY) / rawDist;
+                    const halfCos = (1 + cosAngle) * 0.5;
+                    const shaped = Math.pow(halfCos, env.sharpness);
+                    const maxReach = env.backwardReach + env.reachDelta * shaped;
+                    if (maxReach < 5 || rawDist >= maxReach) continue;
+
+                    const falloff = 1 - rawDist / maxReach;
+                    const intensity = falloff * Math.sqrt(falloff) * 0.85;
+                    const col = colors[i];
+                    totalR += col[0] * intensity;
+                    totalG += col[1] * intensity;
+                    totalB += col[2] * intensity;
+                    totalA += intensity * 200;
+                }
+
+                const r = totalR > 255 ? 255 : (totalR + 0.5) | 0;
+                const g = totalG > 255 ? 255 : (totalG + 0.5) | 0;
+                const b = totalB > 255 ? 255 : (totalB + 0.5) | 0;
+                const a = totalA > 255 ? 255 : (totalA + 0.5) | 0;
+
+                const pyEnd = Math.min((gy + 1) * gridSize, height);
+                const pxEnd = Math.min((gx + 1) * gridSize, width);
+                for (let py = gy * gridSize; py < pyEnd; py++) {
+                    const rowOff = py * width * 4;
+                    for (let px = gx * gridSize; px < pxEnd; px++) {
+                        const idx = rowOff + px * 4;
+                        pixelData[idx] = r;
+                        pixelData[idx + 1] = g;
+                        pixelData[idx + 2] = b;
+                        pixelData[idx + 3] = a;
+                    }
+                }
+            }
+        }
+        self.postMessage({ pixelData }, [pixelData.buffer]);
+    };
+    `;
+    const renderWorker = new Worker(URL.createObjectURL(new Blob([workerCode], {type: 'application/javascript'})));
+    let workerBusy = false;
+    let pendingPixels = null;
+
+    renderWorker.onmessage = function(e) {
+        pendingPixels = e.data.pixelData;
+        workerBusy = false;
+    };
+
     // --- Rendering ---
     function renderTopView(canvas, ctx) {
         const width = canvas.width;
@@ -662,83 +737,39 @@
 
         if (alive.length === 0) return;
 
-        // Compute Voronoi (still needed for area stats)
+        // Compute envelopes (lightweight — just per-particle params)
         const voronoi = computeVoronoi(alive, width, height);
 
-        // Draw overlapping probability envelopes with additive blending
-        // Each particle's cone is independent — overlaps show interaction potential
-        const imageData = ctx.createImageData(width, height);
-        const data = imageData.data;
-
-        // Pre-parse colors
-        const colorCache = alive.map(p => {
-            const c = document.createElement('canvas').getContext('2d');
-            c.fillStyle = p.color;
-            c.fillRect(0, 0, 1, 1);
-            const d = c.getImageData(0, 0, 1, 1).data;
-            return {r: d[0], g: d[1], b: d[2]};
-        });
-
-        const gridSize = 4;
-        const gw = Math.ceil(width / gridSize);
-        const gh = Math.ceil(height / gridSize);
-
-        for (let gy = 0; gy < gh; gy++) {
-            for (let gx = 0; gx < gw; gx++) {
-                const cellX = (gx + 0.5) * gridSize;
-                const cellY = (gy + 0.5) * gridSize;
-
-                // Accumulate contributions from ALL particles
-                let totalR = 0, totalG = 0, totalB = 0, totalA = 0;
-
-                for (let i = 0; i < alive.length; i++) {
-                    const env = voronoi.envelopes[i];
-                    const col = colorCache[i];
-                    const dx = cellX - env.x;
-                    const dy = cellY - env.y;
-                    const rawDist = Math.sqrt(dx * dx + dy * dy) + 0.001;
-
-                    const cosAngle = (dx * env.dirX + dy * env.dirY) / rawDist;
-                    const halfCos = (1 + cosAngle) * 0.5;
-                    const shaped = Math.pow(halfCos, env.sharpness);
-                    const maxReachInDir = Math.max(env.backwardReach + (env.forwardReach - env.backwardReach) * shaped, 5);
-
-                    const normPos = rawDist / maxReachInDir;
-                    if (normPos >= 1.0) continue; // outside this particle's envelope
-
-                    const radialFalloff = 1 - normPos;
-                    const intensity = Math.pow(radialFalloff, 1.4) * 0.8;
-
-                    totalR += col.r * intensity;
-                    totalG += col.g * intensity;
-                    totalB += col.b * intensity;
-                    totalA += intensity * 200;
-                }
-
-                // Clamp and write pixel data
-                const r = Math.min(255, Math.round(totalR));
-                const g = Math.min(255, Math.round(totalG));
-                const b = Math.min(255, Math.round(totalB));
-                const a = Math.min(255, Math.round(totalA));
-
-                for (let py = gy * gridSize; py < Math.min((gy + 1) * gridSize, height); py++) {
-                    for (let px = gx * gridSize; px < Math.min((gx + 1) * gridSize, width); px++) {
-                        const idx = (py * width + px) * 4;
-                        data[idx] = r;
-                        data[idx + 1] = g;
-                        data[idx + 2] = b;
-                        data[idx + 3] = a;
-                    }
-                }
-            }
+        // Dispatch pixel work to worker if idle
+        if (!workerBusy) {
+            workerBusy = true;
+            const envData = voronoi.envelopes.map(env => ({
+                x: env.x, y: env.y, dirX: env.dirX, dirY: env.dirY,
+                forwardReach: env.forwardReach, backwardReach: env.backwardReach,
+                reachDelta: env.forwardReach - env.backwardReach,
+                sharpness: env.sharpness,
+                maxReachSq: env.forwardReach * env.forwardReach
+            }));
+            const colData = alive.map(p => {
+                const tmp = document.createElement('canvas').getContext('2d');
+                tmp.fillStyle = p.color; tmp.fillRect(0,0,1,1);
+                const d = tmp.getImageData(0,0,1,1).data;
+                return [d[0], d[1], d[2]];
+            });
+            renderWorker.postMessage({ width, height, gridSize: 4, envelopes: envData, colors: colData });
         }
 
-        // No boundary lines — cones overlap and blend naturally
-
-        ctx.putImageData(imageData, 0, 0);
+        // Draw last completed frame from worker (validate size matches current canvas)
+        if (pendingPixels && pendingPixels.byteLength === width * height * 4) {
+            const imageData = new ImageData(new Uint8ClampedArray(pendingPixels), width, height);
+            ctx.putImageData(imageData, 0, 0);
+        }
 
         // Draw interaction boundaries where envelopes overlap
         if (showBoundaries && alive.length > 1) {
+            const gridSize = 4;
+            const gw = Math.ceil(width / gridSize);
+            const gh = Math.ceil(height / gridSize);
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
             ctx.lineWidth = 1;
             for (let gy = 0; gy < gh - 1; gy++) {
@@ -877,12 +908,12 @@
             ctx.arc(p.x, p.y, 3 + p.mass * 1.5, 0, Math.PI * 2);
             ctx.fill();
 
-            // Interaction radius indicator
+            // Interaction radius indicator (core size + interaction distance)
             ctx.strokeStyle = p.color + '55';
             ctx.lineWidth = 1;
             ctx.setLineDash([2, 3]);
             ctx.beginPath();
-            ctx.arc(p.x, p.y, params.interactionRadius, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, (3 + p.mass * 1.5) + params.interactionRadius, 0, Math.PI * 2);
             ctx.stroke();
             ctx.setLineDash([]);
 
@@ -1165,8 +1196,9 @@
         // Advance particles
         alive.forEach(p => p.step(1, width, height));
 
-        // Check interactions
-        const merges = checkInteractions(alive, params.interactionRadius);
+        // Check interactions (run twice — before and after move — to catch fast passthrough)
+        const aliveAfterStep = particles.filter(p => p.alive);
+        const merges = checkInteractions(aliveAfterStep, params.interactionRadius);
         merges.forEach(m => {
             mergeEvents.push(m);
             logEvent(m);
